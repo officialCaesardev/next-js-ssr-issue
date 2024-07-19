@@ -1,0 +1,23 @@
+services:
+  next:
+    container_name: next
+    build:
+      context: ./frontend
+      dockerfile: ./Dockerfile
+    restart: always
+    ports:
+      - 3000:3000
+    networks:
+      - fullStackNet
+  express:
+    container_name: express
+    build:
+      context: ./backend
+      dockerfile: ./Dockerfile
+    ports:
+      - 8080:8080
+    networks:
+      - fullStackNet
+networks:
+  fullStackNet:
+    external: true
