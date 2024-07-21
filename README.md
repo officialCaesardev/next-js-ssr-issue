@@ -197,3 +197,161 @@ const nextConfig = {
 
 export default nextConfig;
 ```
+
+# Debugging Update 1
+
+I'm still trying to fix this issue. Here are the steps I took to debug it:
+
+1. I created a `test.js` file with the following content:
+
+    ```javascript
+    const main = async () => {
+      try {
+        const res = await fetch('http://express:8080');
+        if (!res.ok) {
+          data = 'Network response was not ok.';
+        }
+        const data = await res.text();
+        console.log(data);
+      } catch (error) {
+        console.log('err', error);
+      }
+    };
+
+    main();
+    ```
+
+2. I built the Next.js project locally and copied the `.next/standalone/server.js` file to the root folder. I then included the content of `test.js` in the `server.js` file that was built using `next build`.
+
+3. In the Next.js Dockerfile, I added the following lines before starting the server to overwrite `server.js`:
+
+    ```Dockerfile
+    COPY ./server.js ./
+    COPY ./test.js ./
+
+    CMD ["node", "server.js"]
+    ```
+
+4. I started the Docker container and used `docker exec -it next sh`. Running `ls` produced the following output:
+
+    ```sh
+    /app $ ls
+    node_modules  package.json  public  server.js  test.js
+    ```
+
+5. I ran `node test.js` to fetch the data:
+
+    ```sh
+    /app $ node test.js
+    Hello, Express with TypeScript and CORS!
+    ```
+
+6. I checked the server logs using `docker-compose logs -f next` and got the following output:
+
+    ```sh
+    PS C:\code\test_8> docker-compose logs -f next
+    next  |   ▲ Next.js 14.2.5
+    next  |   - Local:        http://0c3e47a52dec:3000
+    next  |   - Network:      http://172.19.0.2:3000
+    next  |
+    next  |  ✓ Starting...
+    next  | err TypeError: fetch failed
+    next  |     at node:internal/deps/undici/undici:13178:13
+    next  |     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    next  |     at async main (/app/server.js:187:17) {
+    next  |   [cause]: Error: connect ECONNREFUSED 172.19.0.3:8080
+    next  |       at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1605:16) {
+    next  |     errno: -111,
+    next  |     code: 'ECONNREFUSED',
+    next  |     syscall: 'connect',
+    next  |     address: '172.19.0.3',
+    next  |     port: 8080
+    next  |   }
+    next  | }
+    next  |  ✓ Ready in 161ms
+    ```
+
+This error is interesting. It occurs only at runtime in Next.js, but works fine otherwise.
+
+7. To get a clearer idea, I included `console.log('res', res);` in `test.js` to see the full response. Here is what I got:
+
+    ```sh
+    /app $ node test.js
+    Hello, Express with TypeScript and CORS!
+    res Response {
+      status: 200,
+      statusText: 'OK',
+      headers: Headers {
+        'x-powered-by': 'Express',
+        'access-control-allow-origin': '*',
+        'content-type': 'text/html; charset=utf-8',
+        'content-length': '40',
+        etag: 'W/"28-oyCv47GF8XZOnwEXycdvWVxvI5g"',
+        date: 'Sun, 21 Jul 2024 01:56:47 GMT',
+        connection: 'keep-alive',
+        'keep-alive': 'timeout=5'
+      },
+      body: ReadableStream { locked: true, state: 'closed', supportsBYOB: true },
+      bodyUsed: true,
+      ok: true,
+      redirected: false,
+      type: 'basic',
+      url: 'http://express:8080/'
+    }
+    ```
+
+# Debugging Update 2
+
+1. I ran the backend server locally on port 9000.
+2. I changed the `fetch` call in `server.js` from `fetch('http://express:8080');` to `fetch('http://localhost:9000/');`. Then, I ran the Docker container again and added the following lines in the catch block: `catch (error) {console.log(error);console.log(error.cause);}`
+
+    ```sh
+    Attaching to express, next
+    express  |
+    express  | > test_4@1.0.0 start
+    express  | > node dist/index.js
+    express  |
+    next     |   ▲ Next.js 14.2.5
+    next     |   - Local:        http://2bc0d47da3bf:3000
+    next     |   - Network:      http://172.19.0.3:3000
+    next     |
+    next     |  ✓ Starting...
+    next     | TypeError: fetch failed
+    next     |     at node:internal/deps/undici/undici:13178:13
+    next     |     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    express  | Server is running at http://localhost:8080
+    next     |     at async main (/app/server.js:187:17) {
+    next     |   [cause]: AggregateError [ECONNREFUSED]:
+    next     |       at internalConnectMultiple (node:net:1116:18)
+    next     |       at afterConnectMultiple (node:net:1683:7) {
+    next     |     code: 'ECONNREFUSED',
+    next     |     [errors]: [ [Error], [Error] ]
+    next     |   }
+    next     | }
+    next     | AggregateError [ECONNREFUSED]:
+    next     |     at internalConnectMultiple (node:net:1116:18)
+    next     |     at afterConnectMultiple (node:net:1683:7) {
+    next     |   code: 'ECONNREFUSED',
+    next     |   [errors]: [
+    next     |     Error: connect ECONNREFUSED ::1:9000
+    next     |         at createConnectionError (node:net:1646:14)
+    next     |         at afterConnectMultiple (node:net:1676:16) {
+    next     |       errno: -111,
+    next     |       code: 'ECONNREFUSED',
+    next     |       syscall: 'connect',
+    next     |       address: '::1',
+    next     |       port: 9000
+    next     |     },
+    next     |     Error: connect ECONNREFUSED 127.0.0.1:9000
+    next     |         at createConnectionError (node:net:1646:14)
+    next     |         at afterConnectMultiple (node:net:1676:16) {
+    next     |       errno: -111,
+    next     |       code: 'ECONNREFUSED',
+    next     |       syscall: 'connect',
+    next     |       address: '127.0.0.1',
+    next     |       port: 9000
+    next     |     }
+    next     |   ]
+    next     | }
+    next     |  ✓ Ready in 242ms
+    ```
